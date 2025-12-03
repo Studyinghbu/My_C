@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include "calculator.h"
 
 // AlphaBlend 需要
 #pragma comment(lib, "Msimg32.lib")
