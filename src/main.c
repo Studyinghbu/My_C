@@ -13,8 +13,8 @@
 #define IDM_EXIT    103
 
 // 定时器ID
-#define IDT_SPEEDUPDATE   200
-#define IDT_EMOTIONUPDATE 201
+#define IDT_SPEEDUPDATE   200   // 现在：5 秒触发一次
+#define IDT_EMOTIONUPDATE 201   // 100 ms，用于平滑表情
 
 // 全局变量
 HINSTANCE g_hInstance;
@@ -42,17 +42,16 @@ BOOL g_bDragging   = FALSE;
 BOOL g_bEscPressed = FALSE;
 
 // 统计信息
-int g_nKeyCount     = 0;
-int g_nLastKeyCount = 0;
+int g_nKeyCount     = 0;   // 总按键计数（用于统计窗口）
+int g_nLastKeyCount = 0;   // 上一个窗口结束时的计数
 int g_nTypingSpeed  = 0;   // char/s
-int g_totalChars    = 0;
+int g_totalChars    = 0;   // 总按键数量（展示用）
 int g_currentSpeed  = 0;
-clock_t g_lastCheckTime = 0;
 
 // 表情状态
-int   g_currentEmotion  = 0;    // 0-8
-float g_emotionProgress = 0.0f; // 0~1
-int   g_targetEmotion   = 0;
+int   g_currentEmotion  = 0;    // 当前表情索引 0-8
+float g_emotionProgress = 0.0f; // 当前 -> 目标 的插值进度 0~1
+int   g_targetEmotion   = 0;    // 目标表情索引
 
 // 键盘钩子回调函数
 LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
@@ -87,10 +86,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return FALSE;
     }
 
-    g_lastCheckTime = clock();
-
-    SetTimer(g_hWnd, IDT_SPEEDUPDATE,   1000, NULL);
-    SetTimer(g_hWnd, IDT_EMOTIONUPDATE, 100,  NULL);
+    // 定时器：每 5 秒统计一次速度 + 切一次表情
+    SetTimer(g_hWnd, IDT_SPEEDUPDATE,   5000, NULL);  // 5000 ms
+    // 定时器：每 100ms 做一次表情插值
+    SetTimer(g_hWnd, IDT_EMOTIONUPDATE, 100,  NULL);  // 100 ms
 
     while ((bRet = GetMessage(&msg, NULL, 0, 0)) != 0)
     {
@@ -141,6 +140,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     if (!g_hWnd)
         return FALSE;
 
+    // 以纯白色为透明色键（可根据你的 bmp 背景调整）
     SetLayeredWindowAttributes(g_hWnd, RGB(255, 255, 255), 255, LWA_COLORKEY | LWA_ALPHA);
 
     g_hdcMem = CreateCompatibleDC(NULL);
@@ -166,6 +166,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
 
+        // 绘制头像（当前表情 + 目标表情的平滑过渡）
         if (g_hBmp[g_currentEmotion] && g_hBmp[g_targetEmotion])
         {
             BITMAP bm;
@@ -180,6 +181,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             BitBlt(hdcTemp, 0, 0, g_imgWidth, g_imgHeight, g_hdcMem, 0, 0, SRCCOPY);
             SelectObject(g_hdcMem, g_hBmpOld);
 
+            // 计算缩放比例，保持原始宽高比
+            int scaledWidth, scaledHeight;
+            float scaleX = (float)g_nWindowWidth / g_imgWidth;
+            float scaleY = (float)g_nWindowHeight / (g_imgHeight + 50); // 50是文字区域高度
+            float scale = min(scaleX, scaleY);
+            
+            scaledWidth = (int)(g_imgWidth * scale);
+            scaledHeight = (int)(g_imgHeight * scale);
+            
+            // 计算居中位置
+            int offsetX = (g_nWindowWidth - scaledWidth) / 2;
+            int offsetY = 0;
+            
+            // 再叠加目标表情，按 g_emotionProgress 做透明度
             if (g_currentEmotion != g_targetEmotion)
             {
                 g_hBmpOld = (HBITMAP)SelectObject(g_hdcMem, g_hBmp[g_targetEmotion]);
@@ -200,7 +215,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 SelectObject(g_hdcMem, g_hBmpOld);
             }
 
-            BitBlt(hdc, 0, 0, g_imgWidth, g_imgHeight, hdcTemp, 0, 0, SRCCOPY);
+            // 使用StretchBlt缩放图像到目标窗口大小
+            StretchBlt(hdc, offsetX, offsetY, scaledWidth, scaledHeight, hdcTemp, 0, 0, g_imgWidth, g_imgHeight, SRCCOPY);
 
             SelectObject(hdcTemp, hbmpOldTemp);
             DeleteObject(hbmpTemp);
@@ -209,21 +225,28 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         // 画文字，在图片下方
         TCHAR buffer[128];
+
+        // 计算缩放后的图像高度
+        int scaledHeight;
+        float scaleX = (float)g_nWindowWidth / g_imgWidth;
+        float scaleY = (float)g_nWindowHeight / (g_imgHeight + 50);
+        float scale = min(scaleX, scaleY);
+        scaledHeight = (int)(g_imgHeight * scale);
         
-        // 先清除文字区域（用白色背景覆盖）
+        // 清除文字区域（用白色背景覆盖）
         RECT textRect;
-        textRect.left = 0;
-        textRect.top = g_imgHeight;
-        textRect.right = g_nWindowWidth;
+        textRect.left   = 0;
+        textRect.top    = scaledHeight;
+        textRect.right  = g_nWindowWidth;
         textRect.bottom = g_nWindowHeight;
         FillRect(hdc, &textRect, (HBRUSH)GetStockObject(WHITE_BRUSH));
-        
+
         // 设置文字颜色和背景模式
         SetTextColor(hdc, RGB(0, 0, 0));
         SetBkMode(hdc, OPAQUE);
         SetBkColor(hdc, RGB(255, 255, 255));
 
-        int textY = g_imgHeight + 5;
+        int textY = scaledHeight + 5;
 
         wsprintf(buffer, TEXT("Total Chars: %d"), g_totalChars);
         TextOut(hdc, 10, textY, buffer, lstrlen(buffer));
@@ -234,8 +257,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         EndPaint(hWnd, &ps);
         return 0;
     }
-
-
 
     case WM_LBUTTONDOWN:
         g_bDragging = TRUE;
@@ -273,13 +294,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         switch (LOWORD(wParam))
         {
         case IDM_SMALL:
-            ResizeWindow(hWnd, 150, 150);
+            ResizeWindow(hWnd, 150, 200);  // 增加高度以显示文字
             break;
         case IDM_MEDIUM:
-            ResizeWindow(hWnd, 200, 200);
+            ResizeWindow(hWnd, 200, 250);  // 增加高度以显示文字
             break;
         case IDM_LARGE:
-            ResizeWindow(hWnd, 250, 250);
+            ResizeWindow(hWnd, 250, 300);  // 增加高度以显示文字
             break;
         case IDM_EXIT:
             DestroyWindow(hWnd);
@@ -290,11 +311,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_TIMER:
         if (wParam == IDT_SPEEDUPDATE)
         {
+            // 每 5 秒统计一次打字速度并切一次表情
             UpdateTypingSpeed();
-            InvalidateRect(hWnd, NULL, FALSE);
         }
         else if (wParam == IDT_EMOTIONUPDATE)
         {
+            // 每 100ms 进行表情平滑
             UpdateEmotion();
         }
         return 0;
@@ -330,7 +352,7 @@ BOOL LoadResources()
         return FALSE;
     }
 
-    // exe 在 bin 下，res 在上一层的 res 目录
+    // exe 在 bin 下，res 在上一层的 res 目录：..\\res
     WCHAR szResDir[MAX_PATH];
     wsprintfW(szResDir, L"%s\\..\\res", szExeDir);
 
@@ -397,42 +419,41 @@ BOOL LoadResources()
     return TRUE;
 }
 
-// 每 5 秒更新一次打字速度，并随机选表情
+// 每 5 秒更新一次打字速度，并根据速度选表情区间
 void UpdateTypingSpeed()
 {
-    clock_t currentTime = clock();
-    double elapsedTime = (double)(currentTime - g_lastCheckTime) / CLOCKS_PER_SEC;
+    // 过去 5 秒的新增按键数
+    int charCount = g_nKeyCount - g_nLastKeyCount;
 
-    if (elapsedTime >= 5.0)
-    {
-        int charCount = g_nKeyCount - g_nLastKeyCount;
-        g_nTypingSpeed = (int)(charCount / elapsedTime);
-        g_nLastKeyCount = g_nKeyCount;
-        g_lastCheckTime = currentTime;
+    // 简单用 charCount / 5 作为 char/s
+    g_nTypingSpeed  = charCount / 5;
+    g_nLastKeyCount = g_nKeyCount;
+    g_currentSpeed  = g_nTypingSpeed;
 
-        g_currentSpeed = g_nTypingSpeed;
+    // 根据速度选表情区间
+    int baseIndex = 0;
+    if (g_nTypingSpeed >= 10)
+        baseIndex = 9;   // 红温：cinna_7~10
+    else if (g_nTypingSpeed >= 3)
+        baseIndex = 2;   // 一般：cinna_3~9
+    else
+        baseIndex = 0;   // 悠闲：cinna_1~2
 
-        int baseIndex = 0;
+    int newTarget = baseIndex + (rand() % 3);
 
-        if (g_nTypingSpeed >= 9)
-            baseIndex = 6;          // cinna_7~9
-        else if (g_nTypingSpeed >= 4)
-            baseIndex = 3;          // cinna_4~6
-        else
-            baseIndex = 0;          // cinna_1~3
+    g_targetEmotion   = newTarget;
+    g_emotionProgress = 0.0f;   // 从 0 开始插值
 
-        int newTarget = baseIndex + (rand() % 3);
-        g_targetEmotion   = newTarget;
-        g_emotionProgress = 0.0f;
-    }
+    // 文字和表情都需要重绘
+    InvalidateRect(g_hWnd, NULL, FALSE);
 }
 
-// 每 100ms 做表情平滑过渡
+// 每 100ms 做一次表情平滑过渡
 void UpdateEmotion()
 {
     if (g_currentEmotion != g_targetEmotion)
     {
-        g_emotionProgress += 0.05f;
+        g_emotionProgress += 0.05f;  // 调整这个可以控制过渡时间
 
         if (g_emotionProgress >= 1.0f)
         {
@@ -470,7 +491,7 @@ void ShowContextMenu(HWND hWnd, LPARAM lParam)
     DestroyMenu(hMenu);
 }
 
-// 改变窗口尺寸（目前只简单缩放）
+// 改变窗口尺寸并缩放图片
 void ResizeWindow(HWND hWnd, int width, int height)
 {
     g_nWindowWidth  = width;
