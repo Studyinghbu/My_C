@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include "calculator.h"
+#include <string.h>
+
 
 // AlphaBlend 需要
 #pragma comment(lib, "Msimg32.lib")
@@ -11,11 +12,18 @@
 #define IDM_SMALL   100
 #define IDM_MEDIUM  101
 #define IDM_LARGE   102
+#define IDM_TESTTYPING 104
 #define IDM_EXIT    103
 
 // 定时器ID
 #define IDT_SPEEDUPDATE   200   // 现在：5 秒触发一次
 #define IDT_EMOTIONUPDATE 201   // 100 ms，用于平滑表情
+
+// 函数声明
+void GetCurrentDateTime(char* datetimeBuffer);
+void InitDataFile();
+void SaveSessionData();
+void SimulateTyping();
 
 // 全局变量
 HINSTANCE g_hInstance;
@@ -48,6 +56,11 @@ int g_nLastKeyCount = 0;   // 上一个窗口结束时的计数
 int g_nTypingSpeed  = 0;   // char/s
 int g_totalChars    = 0;   // 总按键数量（展示用）
 int g_currentSpeed  = 0;
+
+// 打字数据记录相关变量
+char g_dataFile[100]      = "";  // 数据文件路径
+char g_startDateTime[20]  = "";  // 程序启动时间，格式：YYYY-MM-DD HH:MM:SS
+int g_startCharCount      = 0;    // 程序启动时的总字符数
 
 // 表情状态
 int   g_currentEmotion  = 0;    // 当前表情索引 0-8
@@ -87,6 +100,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return FALSE;
     }
 
+    // 初始化数据文件和启动时间
+    InitDataFile();
+    GetCurrentDateTime(g_startDateTime);
+    g_startCharCount = g_totalChars;
+    
     // 定时器：每 5 秒统计一次速度 + 切一次表情
     SetTimer(g_hWnd, IDT_SPEEDUPDATE,   5000, NULL);  // 5000 ms
     // 定时器：每 100ms 做一次表情插值
@@ -303,6 +321,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDM_LARGE:
             ResizeWindow(hWnd, 250, 300);  // 增加高度以显示文字
             break;
+        case IDM_TESTTYPING:
+            SimulateTyping();
+            break;
         case IDM_EXIT:
             DestroyWindow(hWnd);
             break;
@@ -323,6 +344,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         return 0;
 
     case WM_DESTROY:
+        // 保存本次会话数据
+        SaveSessionData();
         CleanupResources();
         // 卸载键盘钩子
         if (g_hKeyboardHook)
@@ -483,6 +506,7 @@ void ShowContextMenu(HWND hWnd, LPARAM lParam)
     AppendMenu(hMenu, MF_STRING, IDM_SMALL,  TEXT("Small"));
     AppendMenu(hMenu, MF_STRING, IDM_MEDIUM, TEXT("Medium"));
     AppendMenu(hMenu, MF_STRING, IDM_LARGE,  TEXT("Large"));
+    AppendMenu(hMenu, MF_STRING, IDM_TESTTYPING, TEXT("Simulate Typing"));
     AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
     AppendMenu(hMenu, MF_STRING, IDM_EXIT,   TEXT("Exit"));
 
@@ -536,6 +560,101 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
     }
     // 调用下一个钩子
     return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
+}
+
+// 获取当前日期时间，格式：YYYY-MM-DD HH:MM:SS
+void GetCurrentDateTime(char* datetimeBuffer)
+{
+    time_t now;
+    struct tm* timeinfo;
+    time(&now);
+    timeinfo = localtime(&now);
+    strftime(datetimeBuffer, 20, "%Y-%m-%d %H:%M:%S", timeinfo);
+}
+
+// 初始化数据文件路径
+void InitDataFile()
+{
+    // 直接将数据文件保存在程序当前工作目录
+    strcpy(g_dataFile, "typing_data.csv");
+}
+
+// 保存本次会话打字数据到CSV文件
+void SaveSessionData()
+{
+    // 获取结束时间
+    char endDateTime[20];
+    GetCurrentDateTime(endDateTime);
+    
+    // 计算本次会话的打字数量
+    int sessionChars = g_totalChars - g_startCharCount;
+    
+    // 显示数据保存信息
+    char msg[128];
+    sprintf(msg, "Saving data:\nStart: %s\nEnd: %s\nChars: %d", 
+            g_startDateTime, endDateTime, sessionChars);
+    MessageBoxA(NULL, msg, "Typing Data", MB_OK);
+    
+    // 打开文件，如果不存在则创建
+    FILE* fp = fopen(g_dataFile, "a");
+    if (fp == NULL)
+    {
+        // 如果打开失败，尝试创建文件
+        fp = fopen(g_dataFile, "w");
+        if (fp == NULL)
+        {
+            MessageBoxA(NULL, "Failed to create data file", "Error", MB_OK);
+            return;
+        }
+        
+        // 写入CSV表头
+        fprintf(fp, "Start Time,End Time,Chars Typed\n");
+    }
+    
+    // 写入会话数据
+    fprintf(fp, "%s,%s,%d\n", g_startDateTime, endDateTime, sessionChars);
+    fclose(fp);
+    
+    // 显示保存成功信息
+    MessageBoxA(NULL, "Data saved successfully", "Success", MB_OK);
+}
+
+// 模拟键盘输入
+void SimulateTyping()
+{
+    // 获取当前活动窗口
+    HWND hwnd = GetForegroundWindow();
+    if (hwnd == NULL)
+    {
+        MessageBox(NULL, TEXT("Failed to get foreground window"), TEXT("Error"), MB_OK);
+        return;
+    }
+    
+    // 模拟输入一些字符
+    char text[] = "This is a test of the typing data recording function. 1234567890";
+    int len = strlen(text);
+    
+    // 显示模拟打字的通知
+    char msg[128];
+    sprintf(msg, "Simulating typing: %s", text);
+    MessageBoxA(NULL, msg, "Typing Simulation", MB_OK);
+    
+    for (int i = 0; i < len; i++)
+    {
+        // 按下按键
+        keybd_event(text[i], 0, 0, 0);
+        
+        // 发送消息到活动窗口
+        SendMessage(hwnd, WM_CHAR, text[i], 0);
+        
+        // 释放按键
+        keybd_event(text[i], 0, KEYEVENTF_KEYUP, 0);
+        
+        // 等待一下，模拟真实打字
+        Sleep(100);
+    }
+    
+    MessageBoxA(NULL, "Typing simulation completed.", "Simulation Done", MB_OK);
 }
 
 // 清理资源
